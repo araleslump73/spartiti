@@ -47,9 +47,9 @@ function haveToken() { return !!token && Date.now() < tokenExp - 60000; }
 
 function login(silent) {
   var state = Math.random().toString(36).slice(2) + Date.now();
-  sessionStorage.setItem("oauthState", state);
-  sessionStorage.setItem("ret", location.hash || "#/");
-  if (silent) sessionStorage.setItem("silentAt", String(Date.now()));
+  LS.set("oauthState", state);   // localStorage: condiviso fra l'app installata e la scheda di login di Google
+  LS.set("ret", location.hash || "#/");
+  if (silent) LS.set("silentAt", String(Date.now()));
   var p = new URLSearchParams({
     client_id: CFG.clientId, redirect_uri: REDIRECT, response_type: "token",
     scope: SCOPE, include_granted_scopes: "true", state: state
@@ -63,8 +63,8 @@ function handleOAuthReturn() {
   var h = location.hash;
   if (!/(^#|&)(access_token|error)=/.test(h)) return;
   var p = new URLSearchParams(h.slice(1));
-  var ret = sessionStorage.getItem("ret") || "#/";
-  if (p.get("state") && p.get("state") === sessionStorage.getItem("oauthState")) {
+  var ret = LS.get("ret", "#/");
+  if (p.get("state") && p.get("state") === LS.get("oauthState", "")) {
     if (p.get("access_token")) {
       token = p.get("access_token");
       tokenExp = Date.now() + (parseInt(p.get("expires_in"), 10) || 3600) * 1000;
@@ -73,7 +73,7 @@ function handleOAuthReturn() {
       authError = p.get("error") || "errore";
     }
   }
-  sessionStorage.removeItem("oauthState");
+  LS.del("oauthState");
   history.replaceState(null, "", REDIRECT + ret);
 }
 
@@ -84,7 +84,7 @@ function clientOk() { return !!CFG.clientId && !/INCOLLA/.test(CFG.clientId); }
 function needToken() {
   if (navigator.onLine === false) return Promise.reject(new AppError("Sei offline", "offline"));
   if (!clientOk()) return Promise.reject(new AppError("Client ID mancante", "login"));
-  var last = +(sessionStorage.getItem("silentAt") || 0);
+  var last = +LS.get("silentAt", "0");
   if (!authError && Date.now() - last > 60000) { login(true); return new Promise(function () {}); }
   return Promise.reject(new AppError("Serve l'accesso a Google", "login"));
 }
