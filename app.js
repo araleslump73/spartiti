@@ -264,6 +264,7 @@ function setZoom(d) {
 function toggleTheme() {
   var dark = document.documentElement.classList.toggle("dark");
   LS.set("theme", dark ? "dark" : "light");
+  if (cur.theme) cur.theme();
 }
 // Schermo intero a 3 stati: 0 normale, 1 intero (barra dell'app visibile), 2 intero senza barra.
 // Firefox permette il fullscreen solo dopo un tocco: se è l'impostazione salvata (predefinita: sì),
@@ -504,14 +505,37 @@ async function showFile(id, seq) {
   else msg('Formato non visualizzabile qui. <a class="act" href="' + url + '" download="' + esc(m.name) + '">Scarica</a>');
 }
 
+// Apertura rapida: l'export di Google è regolare, quindi stili/corpo/link si ricavano da stringhe senza
+// costruire l'albero DOM di una pagina da centinaia di KB (conta molto su un tablet lento).
+function fastDoc(html) {
+  var bm = html.match(/<body([^>]*)>([\s\S]*)<\/body>/i);
+  if (!bm) return null;
+  var css = "", re = /<style[^>]*>([\s\S]*?)<\/style>/gi, m;
+  while ((m = re.exec(html))) css += m[1] + "\n";
+  var cm = bm[1].match(/class="([^"]*)"/);
+  var inner = bm[2].replace(/<script[\s\S]*?<\/script>/gi, "")
+    .replace(/<a\s([^>]*?)href="([^"]*)"([^>]*)>/g, function (all, pre, href, post) {
+      var l = mapLink(href.replace(/&amp;/g, "&"));
+      if (l.t === "x") return "<a " + pre + 'href="' + l.url.replace(/&/g, "&amp;").replace(/"/g, "&quot;") + '"' + post + ' target="_blank" rel="noopener">';
+      return "<a " + pre + 'href="#/' + l.t + "/" + l.id + '"' + post + ">";
+    });
+  return { css: css, cls: cm ? cm[1] : "", body: inner };
+}
+
 function renderDoc(html) {
-  var p = parseDoc(html);
-  Array.prototype.forEach.call(p.body.querySelectorAll("a[href]"), function (a) {
-    var l = mapLink(a.getAttribute("href"));
-    if (l.t === "x") { a.setAttribute("href", l.url); a.setAttribute("target", "_blank"); a.setAttribute("rel", "noopener"); }
-    else a.setAttribute("href", "#/" + l.t + "/" + l.id);
-  });
-  view.innerHTML = "<style>" + docCss(p.css) + '</style><div id="doc"><div class="' + esc(p.cls) + '">' + ptToRemHtml(p.body.innerHTML) + "</div></div>";
+  var f = fastDoc(html);
+  if (!f) {                                   // formato inatteso: strada lenta ma generale
+    var p = parseDoc(html);
+    Array.prototype.forEach.call(p.body.querySelectorAll("a[href]"), function (a) {
+      var l = mapLink(a.getAttribute("href"));
+      if (l.t === "x") { a.setAttribute("href", l.url); a.setAttribute("target", "_blank"); a.setAttribute("rel", "noopener"); }
+      else a.setAttribute("href", "#/" + l.t + "/" + l.id);
+    });
+    f = { css: p.css, cls: p.cls, body: p.body.innerHTML };
+  }
+  view.innerHTML = "<style>" + docCss(f.css) + '</style><div id="doc"><div class="' + esc(f.cls) + '">' + ptToRemHtml(f.body) + "</div></div>";
+  // i Doc di spartiti rimandano quasi sempre a PDF: si precarica pdf.js a riposo, così il primo PDF si apre prima
+  setTimeout(function () { loadPdfjs().catch(function () {}); }, 1500);
 }
 
 // ---- PDF con pdf.js (caricato solo quando serve; resta in cache per l'offline)
@@ -530,11 +554,12 @@ async function renderPdf(blob, seq) {
   var lib = await loadPdfjs();
   var data = new Uint8Array(await new Response(blob).arrayBuffer());
   // isEvalSupported:false chiude una vulnerabilità nota delle versioni vecchie di pdf.js
-  var pdf = await lib.getDocument({ data: data, isEvalSupported: false }).promise;
+  // nessun accesso alla rete: i dati sono già qui, quindi si spegne tutto ciò che serve a scaricare a pezzi
+  var pdf = await lib.getDocument({ data: data, isEvalSupported: false, disableRange: true, disableStream: true, disableAutoFetch: true }).promise;
   if (seq !== navSeq) { pdf.destroy(); return; }
   view.innerHTML = '<div id="pdf"></div>';
   var box = $("#pdf"), pages = [], timer = 0, obs;
-  var MAXPX = 2200;                                  // lato massimo di una pagina disegnata (memoria del tablet)
+  var MAXPX = 2000;                                  // lato massimo di una pagina disegnata (memoria del tablet)
   var pz = parseFloat(LS.get("pzoom", "1")) || 1;    // 1 = pagina larga come lo schermo
   var first = await pdf.getPage(1), base = first.getViewport({ scale: 1 });
   if (seq !== navSeq) { pdf.destroy(); return; }
@@ -557,9 +582,10 @@ async function renderPdf(blob, seq) {
     if (p.task) { try { p.task.cancel(); } catch (e) {} p.task = null; }
     if (p.done) { p.c.width = 1; p.c.height = 1; p.done = 0; }
   }
+  function isDark() { return document.documentElement.classList.contains("dark"); }
   function draw(p) {
-    var w = cssWidth();
-    if (p.done === w) return;
+    var w = cssWidth(), dark = isDark(), key = w + (dark ? "d" : "l");
+    if (p.done === key) return;
     var gen = ++p.gen;                               // un nuovo disegno rende obsoleto quello in corso
     if (p.task) { try { p.task.cancel(); } catch (e) {} p.task = null; }
     pdf.getPage(p.n).then(function (pg) {
@@ -571,17 +597,24 @@ async function renderPdf(blob, seq) {
       // si disegna su una tela nascosta: quella visibile resta intatta (mai nera) finché il disegno non è pronto
       var off = document.createElement("canvas");
       off.width = Math.ceil(vp.width); off.height = Math.ceil(vp.height);
-      var t = pg.render({ canvasContext: off.getContext("2d"), viewport: vp });
+      var octx = off.getContext("2d");
+      var t = pg.render({ canvasContext: octx, viewport: vp });
       p.task = t;
       return t.promise.then(function () {
         if (gen !== p.gen) return;
         p.task = null;
+        // sfondo bianco (pdf.js lascia la pagina trasparente); nel tema scuro i colori si invertono UNA volta qui,
+        // invece di un filtro CSS che peserebbe a ogni fotogramma
+        octx.globalCompositeOperation = "destination-over"; octx.fillStyle = "#fff";
+        octx.fillRect(0, 0, off.width, off.height);
+        if (dark) { octx.globalCompositeOperation = "difference"; octx.fillRect(0, 0, off.width, off.height); }
+        octx.globalCompositeOperation = "source-over";
         var c = p.c;
         c.width = off.width; c.height = off.height;
         c.getContext("2d").drawImage(off, 0, 0);
         off.width = off.height = 1;
         p.ar = vp1.height / vp1.width;
-        p.done = w;
+        p.done = key;
         size();
       });
     }).catch(function (e) {
@@ -600,6 +633,8 @@ async function renderPdf(blob, seq) {
   }, { rootMargin: "1000px 0px" });
   pages.forEach(function (p) { obs.observe(p.c); });
   // zoom del PDF: A-/A+ e pinch. Durante il pinch cambia solo la dimensione; a fine gesto ridisegna nitido.
+  cur.zlim = [0.5, 4];
+  cur.theme = function () { pages.forEach(function (p) { p.done = 0; }); redraw(); };   // cambio tema: ridisegna
   cur.zget = function () { return pz; };
   cur.zset = function (z, commit) {
     pz = clampZ(z, 0.5, 4);
@@ -794,10 +829,16 @@ $("#bUpload").onclick = startUpload;
 $("#bEdit").onclick = function () { go("#/e/" + cur.id); };
 $("#bSave").onclick = function () { if (cur.save) cur.save().catch(function (e) { info('<span class="err">Non salvato: ' + esc(e.message || e) + "</span>"); }); };
 $("#bOffline").onclick = function () { if (cur.id) doOffline(cur.id); };
-// Pinch zoom con due dita: come A+/A−, scala il testo (Doc, elenchi) o la larghezza della pagina (PDF).
-// (Lo zoom nativo di Firefox qui non agisce, quindi lo gestiamo noi.)
+// Pinch zoom con due dita (come A+/A−): scala il testo (Doc, elenchi) o la larghezza della pagina (PDF).
+// Durante il gesto si applica solo una trasformazione grafica (fluida, nessun ricalcolo della pagina);
+// a gesto finito si imposta lo zoom vero in un colpo solo, tenendo fermo il punto sotto le dita.
+// Gli ascoltatori sono "passive": non rallentano mai lo scorrimento.
 var pinch = null, pinchRaf = 0;
-function touchDist(t) { var dx = t[0].clientX - t[1].clientX, dy = t[0].clientY - t[1].clientY; return Math.sqrt(dx * dx + dy * dy); }
+function touchInfo(t) {
+  var dx = t[0].clientX - t[1].clientX, dy = t[0].clientY - t[1].clientY;
+  return { d: Math.sqrt(dx * dx + dy * dy), x: (t[0].clientX + t[1].clientX) / 2, y: (t[0].clientY + t[1].clientY) / 2 };
+}
+function zLimits() { return cur.zlim || [0.6, 3.5]; }
 function pinchApply(z, commit) {
   if (cur.zset) return cur.zset(z, commit);
   zoom = clampZ(commit ? Math.round(z * 20) / 20 : z, 0.6, 3.5);
@@ -805,21 +846,32 @@ function pinchApply(z, commit) {
   if (commit) LS.set("zoom", String(zoom));
 }
 document.addEventListener("touchstart", function (e) {
-  if (e.touches.length === 2) pinch = { d: touchDist(e.touches), z: cur.zget ? cur.zget() : zoom, r: 1 };
+  if (e.touches.length !== 2) return;
+  var ti = touchInfo(e.touches), rect = view.getBoundingClientRect();
+  pinch = { d: ti.d, z: cur.zget ? cur.zget() : zoom, r: 1, cx: ti.x, cy: ti.y, ox: ti.x - rect.left, oy: ti.y - rect.top };
+  view.style.transformOrigin = pinch.ox + "px " + pinch.oy + "px";
+  view.style.willChange = "transform";
 }, { passive: true });
 document.addEventListener("touchmove", function (e) {
   if (!pinch || e.touches.length !== 2) return;
-  e.preventDefault();
-  pinch.r = touchDist(e.touches) / pinch.d;
-  if (!pinchRaf) pinchRaf = requestAnimationFrame(function () {   // al massimo un aggiornamento per fotogramma
+  pinch.r = touchInfo(e.touches).d / pinch.d;
+  if (pinchRaf) return;
+  pinchRaf = requestAnimationFrame(function () {          // al massimo un aggiornamento per fotogramma
     pinchRaf = 0;
-    if (pinch) pinchApply(pinch.z * pinch.r, false);
+    if (!pinch) return;
+    var lim = zLimits();
+    view.style.transform = "scale(" + (clampZ(pinch.z * pinch.r, lim[0], lim[1]) / pinch.z) + ")";
   });
-}, { passive: false });
+}, { passive: true });
 function endPinch(e) {
   if (!pinch || e.touches.length >= 2) return;
   var p = pinch; pinch = null;
-  pinchApply(p.z * p.r, true);
+  if (pinchRaf) { cancelAnimationFrame(pinchRaf); pinchRaf = 0; }
+  var lim = zLimits(), newZ = clampZ(p.z * p.r, lim[0], lim[1]);
+  view.style.transform = ""; view.style.willChange = ""; view.style.transformOrigin = "";
+  pinchApply(newZ, true);
+  var eff = (cur.zget ? cur.zget() : zoom) / p.z;           // fattore realmente applicato
+  window.scrollTo(p.ox * eff - p.cx, view.offsetTop + p.oy * eff - p.cy);
 }
 document.addEventListener("touchend", endPinch, { passive: true });
 document.addEventListener("touchcancel", endPinch, { passive: true });
