@@ -18,6 +18,7 @@
   * { box-sizing: border-box; }
   html { font-size: 20.8px; }
   html, body { margin: 0; background: #fff; color: #111; font-family: sans-serif; }
+  body { touch-action: pan-x pan-y; }   /* niente zoom nativo: il pinch lo gestisce l'app */
   body { font-size: 18px; }
   #bar { position: sticky; top: 0; z-index: 10; background: #222; color: #fff; display: flex; align-items: center; padding: 5px; }
   #bar button { background: #444; color: #fff; border: 0; border-radius: 6px; font-size: 20px; min-width: 50px; height: 50px; margin: 0 3px; padding: 0 10px; flex: none; }

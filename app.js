@@ -219,6 +219,14 @@ function linkedIds(html) {
   });
   return out;
 }
+// L'export reale di Google scrive font-size:11pt dentro ogni tag (style="..."), non solo nelle classi:
+// qui pt -> rem (11pt = 1rem) così A-/A+ e il pinch scalano tutto. Al salvataggio si torna ai pt.
+function ptToRemHtml(h) {
+  return h.replace(/font-size:\s*([\d.]+)pt/g, function (a, n) { return "font-size:" + (n / 11).toFixed(3) + "rem"; });
+}
+function remToPtHtml(h) {
+  return h.replace(/font-size:\s*([\d.]+)rem/g, function (a, n) { return "font-size:" + (Math.round(n * 11 * 100) / 100) + "pt"; });
+}
 // CSS dei Doc: confinato dentro #doc, pt -> rem (così A-/A+ ingrandisce tutto)
 function docCss(css) {
   css = css.replace(/@import[^;]*;/g, "")
@@ -470,7 +478,7 @@ function renderDoc(html) {
     if (l.t === "x") { a.setAttribute("href", l.url); a.setAttribute("target", "_blank"); a.setAttribute("rel", "noopener"); }
     else a.setAttribute("href", "#/" + l.t + "/" + l.id);
   });
-  view.innerHTML = "<style>" + docCss(p.css) + '</style><div id="doc"><div class="' + esc(p.cls) + '">' + p.body.innerHTML + "</div></div>";
+  view.innerHTML = "<style>" + docCss(p.css) + '</style><div id="doc"><div class="' + esc(p.cls) + '">' + ptToRemHtml(p.body.innerHTML) + "</div></div>";
 }
 
 // ---- PDF con pdf.js (caricato solo quando serve; resta in cache per l'offline)
@@ -504,7 +512,10 @@ async function renderPdf(blob, seq) {
   }
   function size() {
     var w = cssWidth();
-    pages.forEach(function (p) { p.c.style.width = w + "px"; if (!p.done) p.c.style.height = Math.round(w * base.height / base.width) + "px"; });
+    pages.forEach(function (p) {
+      p.c.style.width = w + "px";
+      p.c.style.height = Math.round(w * (p.ar || base.height / base.width)) + "px";
+    });
   }
   async function draw(p) {
     var w = cssWidth();
@@ -517,6 +528,7 @@ async function renderPdf(blob, seq) {
       var c = p.c; c.width = vp.width; c.height = vp.height;
       c.style.height = Math.round(w * vp1.height / vp1.width) + "px";
       await pg.render({ canvasContext: c.getContext("2d"), viewport: vp }).promise;
+      p.ar = vp1.height / vp1.width;
       p.done = w;
     } catch (e) { /* pagina saltata */ }
     p.busy = false;
@@ -526,6 +538,7 @@ async function renderPdf(blob, seq) {
     es.forEach(function (e) { if (e.isIntersecting) draw(pages[e.target.dataset.n - 1]); });
   }, { rootMargin: "1200px 0px" });
   pages.forEach(function (p) { obs.observe(p.c); });
+  cur.onPinch = size;   // durante il pinch ridimensiona solo (veloce); a fine gesto si ridisegna
   cur.onZoom = function () { size(); pages.forEach(function (p) { p.done = 0; obs.unobserve(p.c); obs.observe(p.c); }); };
   cur.cleanup = function () { obs.disconnect(); pdf.destroy(); };
 }
@@ -541,7 +554,7 @@ async function showEdit(id, seq) {
   var p = parseDoc(html);
   chrome("Modifica: " + m.name, ["bMinus", "bPlus", "bSave"]);
   info("Modifica il testo e poi tocca <b>Salva</b>. Drive conserva la cronologia delle versioni.");
-  view.innerHTML = "<style>" + docCss(p.css) + '</style><div id="doc"><div class="' + esc(p.cls) + '" contenteditable="true">' + p.body.innerHTML + "</div></div>";
+  view.innerHTML = "<style>" + docCss(p.css) + '</style><div id="doc"><div class="' + esc(p.cls) + '" contenteditable="true">' + ptToRemHtml(p.body.innerHTML) + "</div></div>";
   var ed = view.querySelector("[contenteditable]");
   var dirty = false;
   ed.addEventListener("input", function () { dirty = true; });
@@ -552,7 +565,7 @@ async function showEdit(id, seq) {
     save: async function () {
       info("Salvo…");
       var fresh = parseDoc(await dExportHtml(id));          // parte da un export fresco: stili e intestazione intatti
-      fresh.body.innerHTML = ed.innerHTML;
+      fresh.body.innerHTML = remToPtHtml(ed.innerHTML);   // dimensioni di nuovo in pt, come in origine
       var out = "<!DOCTYPE html>" + fresh.d.documentElement.outerHTML;
       await dUpdateHtml(id, out);
       dirty = false;
@@ -713,6 +726,30 @@ $("#bUpload").onclick = startUpload;
 $("#bEdit").onclick = function () { go("#/e/" + cur.id); };
 $("#bSave").onclick = function () { if (cur.save) cur.save().catch(function (e) { info('<span class="err">Non salvato: ' + esc(e.message || e) + "</span>"); }); };
 $("#bOffline").onclick = function () { if (cur.id) doOffline(cur.id); };
+// Pinch zoom con due dita: scala il testo dei Doc e le pagine dei PDF, come A+/A−.
+// (Il zoom nativo di Firefox qui non agisce, quindi lo gestiamo noi.)
+var pinch = null;
+function touchDist(t) { var dx = t[0].clientX - t[1].clientX, dy = t[0].clientY - t[1].clientY; return Math.sqrt(dx * dx + dy * dy); }
+view.addEventListener("touchstart", function (e) {
+  if (e.touches.length === 2) pinch = { d: touchDist(e.touches), z: zoom };
+}, { passive: true });
+view.addEventListener("touchmove", function (e) {
+  if (!pinch || e.touches.length !== 2) return;
+  e.preventDefault();
+  var z = Math.max(0.6, Math.min(3.5, pinch.z * touchDist(e.touches) / pinch.d));
+  if (Math.abs(z - zoom) < 0.03) return;
+  zoom = z; applyZoom();
+  if (cur.onPinch) cur.onPinch();
+}, { passive: false });
+function endPinch(e) {
+  if (!pinch || e.touches.length >= 2) return;
+  pinch = null;
+  zoom = Math.round(zoom * 20) / 20;
+  LS.set("zoom", String(zoom)); applyZoom();
+  if (cur.onZoom) cur.onZoom();
+}
+view.addEventListener("touchend", endPinch, { passive: true });
+view.addEventListener("touchcancel", endPinch, { passive: true });
 document.addEventListener("fullscreenchange", onFsChange);
 document.addEventListener("mozfullscreenchange", onFsChange);
 window.addEventListener("hashchange", route);
