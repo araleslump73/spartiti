@@ -1,6 +1,6 @@
 // Service worker: tiene l'app (e pdf.js) in cache per l'uso offline,
 // e serve dalla cache le immagini dei Doc scaricate per l'offline.
-var V = "spartiti-v4";   // cambiare a ogni pubblicazione per aggiornare l'app sul tablet
+var V = "spartiti-v5";   // cambiare a ogni pubblicazione per aggiornare l'app sul tablet
 var IMG = "spartiti-img";
 var SHELL = ["./", "index.html", "app.js", "config.js", "manifest.webmanifest", "icon.svg",
              "pdfjs/pdf.min.js", "pdfjs/pdf.worker.min.js"];

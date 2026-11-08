@@ -9,7 +9,10 @@ su un tablet vecchio (Firefox 68, Android 4.4). Gira **solo sul tablet**: non se
 - PDF visualizzati nell'app (pdf.js), anche in modalità scura
 - **⬇ Offline**: scarica la cartella o il Doc aperto, **più tutto ciò che è linkato dentro**
   (anche se sta in altre cartelle). Poi funziona senza Wi‑Fi.
-- Tema chiaro/scuro (◐) e schermo intero (⛶; il pulsante ☰ in alto a destra fa riapparire la barra)
+- Tema chiaro/scuro (◐)
+- Schermo intero: parte da solo al primo tocco dopo l'apertura (Firefox non lo permette senza un tocco).
+  Il pulsante ⛶ passa fra: normale → intero → intero senza barra (☰ in alto a destra la fa riapparire).
+  La scelta viene ricordata; per non averlo più all'avvio, torna a "normale" con ⛶.
 
 ## Pubblicazione (una volta)
 L'app deve stare su un indirizzo HTTPS (serve per il funzionamento offline). Si usa GitHub Pages:

@@ -245,13 +245,34 @@ function toggleTheme() {
   var dark = document.documentElement.classList.toggle("dark");
   LS.set("theme", dark ? "dark" : "light");
 }
+// Schermo intero a 3 stati: 0 normale, 1 intero (barra dell'app visibile), 2 intero senza barra.
+// Firefox permette il fullscreen solo dopo un tocco: se è l'impostazione salvata (predefinita: sì),
+// parte automaticamente al primo tocco dopo l'apertura.
+var fsMode = 0;
 function fsEl() { return document.fullscreenElement || document.mozFullScreenElement; }
+function enterFs() { var e = document.documentElement; (e.requestFullscreen || e.mozRequestFullScreen).call(e); }
+function exitFs() { var d = document; if (fsEl()) (d.exitFullscreen || d.mozCancelFullScreen).call(d); }
+function setBar() { document.body.classList.toggle("nobar", fsMode === 2); }
 function toggleFs() {
-  var d = document, e = d.documentElement;
-  if (fsEl()) (d.exitFullscreen || d.mozCancelFullScreen).call(d);
-  else (e.requestFullscreen || e.mozRequestFullScreen).call(e);
+  if (fsMode === 0) { fsMode = 1; enterFs(); }
+  else if (fsMode === 1) { fsMode = 2; }
+  else { fsMode = 0; exitFs(); }
+  LS.set("fs", fsMode ? "1" : "0");
+  setBar();
 }
-function onFsChange() { document.body.classList.toggle("nobar", !!fsEl()); }
+function onFsChange() {
+  if (!fsEl() && fsMode) { fsMode = 0; setBar(); }   // uscito con il tasto indietro di Android
+}
+function armAutoFs() {
+  if (LS.get("fs", "1") !== "1" || fsEl()) return;
+  function go() {
+    document.removeEventListener("click", go, true);
+    document.removeEventListener("touchend", go, true);
+    if (!fsEl() && LS.get("fs", "1") === "1") { fsMode = 1; try { enterFs(); } catch (e) { fsMode = 0; } setBar(); }
+  }
+  document.addEventListener("click", go, true);
+  document.addEventListener("touchend", go, true);
+}
 
 // ------------------------------------------------------------------ interfaccia
 var view = $("#view"), cur = {};
@@ -688,7 +709,7 @@ $("#bMinus").onclick = function () { setZoom(-0.1); };
 $("#bPlus").onclick = function () { setZoom(0.1); };
 $("#bTheme").onclick = toggleTheme;
 $("#bFs").onclick = toggleFs;
-$("#fab").onclick = function () { document.body.classList.toggle("nobar"); };
+$("#fab").onclick = function () { fsMode = 1; setBar(); };
 $("#bUpload").onclick = startUpload;
 $("#bEdit").onclick = function () { go("#/e/" + cur.id); };
 $("#bSave").onclick = function () { if (cur.save) cur.save().catch(function (e) { info('<span class="err">Non salvato: ' + esc(e.message || e) + "</span>"); }); };
@@ -701,6 +722,7 @@ window.addEventListener("offline", updateNet);
 
 if (window.SPARTITI_MOCK) window.SPARTITI_MOCK();   // solo per i test locali (mock.js non viene pubblicato)
 applyZoom();
+armAutoFs();
 handleOAuthReturn();
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(function () {});
 route();
