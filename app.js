@@ -391,8 +391,11 @@ async function metaAny(id) {
   return null;
 }
 var crumbCache = {};
+// Riga del percorso: solo le cartelle PRECEDENTI (per risalire). La cartella corrente è già il titolo
+// nella barra in alto, quindi non si ripete; alla radice la riga non compare.
 async function renderCrumbs(id, seq) {
-  var saved = LS.get("cr:" + id, "");
+  var key = "cr2:" + id;
+  var saved = LS.get(key, "");
   if (saved) crumbs(saved);                   // percorso già noto: appare subito, poi si aggiorna
   var chain = [], n = 0;
   while (id && n++ < 12) {
@@ -403,8 +406,9 @@ async function renderCrumbs(id, seq) {
     id = m.parents && m.parents[0];
   }
   if (seq !== navSeq) return;
+  chain.pop();                                // via la cartella corrente (è nel titolo)
   var html = chain.map(function (m) { return '<a href="#/d/' + m.id + '">' + esc(m.name) + "</a>"; }).join(" &#8250; ");
-  LS.set("cr:" + id, html);
+  LS.set(key, html);
   crumbs(html);
 }
 
