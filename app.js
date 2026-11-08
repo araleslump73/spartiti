@@ -545,6 +545,7 @@ async function renderPdf(blob, seq) {
       info('<span class="err">PDF pagina ' + p.n + ": " + esc(e && e.message || e) + "</span>");
     }
     p.busy = false;
+    if (/debug/.test(location.search)) info("DBG z=" + zoom + " cw=" + cssWidth() + " p" + p.n + " done=" + p.done + " vis=" + p.vis + " err=" + (p.err || 0) + " dpr=" + (window.devicePixelRatio || 1) + " cvs=" + p.c.width + "x" + p.c.height);
     if (p.vis && p.done !== cssWidth() && (p.err || 0) < 3) draw(p);   // lo zoom è cambiato nel frattempo
   }
   size();
