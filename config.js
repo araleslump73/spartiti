@@ -1,4 +1,4 @@
-// OAuth Client ID (tipo "Applicazione web"), vedi README.md
+// OAuth Client ID (tipo "Applicazione web"). Non è un segreto: è pubblico per costruzione.
 window.SPARTITI_CONFIG = {
-  clientId: "INCOLLA_QUI_IL_CLIENT_ID.apps.googleusercontent.com"
+  clientId: "9487207701-ond0tk6ckbk7t7lio7hdqltnl56f33o9.apps.googleusercontent.com"
 };
