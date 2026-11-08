@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#222222">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg">
+<title>Spartiti</title>
+<script>
+  // tema subito, per evitare il lampo bianco in modalità scura
+  try { if (localStorage.getItem("theme") === "dark") document.documentElement.className = "dark"; } catch (e) {}
+</script>
+<style>
+  * { box-sizing: border-box; }
+  html { font-size: 20.8px; }
+  html, body { margin: 0; background: #fff; color: #111; font-family: sans-serif; }
+  body { font-size: 18px; }
+  #bar { position: sticky; top: 0; z-index: 10; background: #222; color: #fff; display: flex; align-items: center; padding: 5px; }
+  #bar button { background: #444; color: #fff; border: 0; border-radius: 6px; font-size: 20px; min-width: 50px; height: 50px; margin: 0 3px; padding: 0 10px; flex: none; }
+  #bar button:active { background: #777; }
+  #bar button[hidden] { display: none; }
+  #title { flex: 1; font-size: 18px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 0 8px; }
+  #info { background: #fff3cd; color: #5c4400; padding: 8px 12px; font-size: 16px; }
+  #info:empty { display: none; }
+  #info a { color: inherit; font-weight: bold; }
+  #info button, .msg button, .act { font-size: 18px; padding: 8px 14px; margin: 4px 6px 4px 0; border: 1px solid #888; border-radius: 6px; background: #f2f2f2; color: #111; }
+  #crumbs { background: #eee; padding: 8px 12px; font-size: 16px; line-height: 1.9; }
+  #crumbs:empty { display: none; }
+  #crumbs a { color: #0645ad; text-decoration: none; }
+  .row { display: flex; align-items: center; min-height: 62px; padding: 8px 14px; font-size: 21px; border-bottom: 1px solid #ddd; color: inherit; text-decoration: none; }
+  .row:active { background: #cde; }
+  .row .ic { width: 40px; flex: none; font-size: 24px; }
+  .row .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+  .row .off { color: #2e7d32; font-size: 14px; margin-left: 8px; }
+  .row .x { margin-left: 8px; }
+  .msg { padding: 22px; font-size: 19px; line-height: 1.5; }
+  .err { color: #b00020; }
+  #fab { position: fixed; top: 8px; right: 8px; z-index: 20; width: 48px; height: 48px; border-radius: 24px; border: 0; background: rgba(60,60,60,.45); color: #fff; font-size: 22px; display: none; }
+  body.nobar #bar, body.nobar #crumbs, body.nobar #info { display: none; }
+  #fab svg { width: 22px; height: 22px; fill: none; stroke: #fff; stroke-width: 2.4; vertical-align: middle; }
+  body.nobar #fab { display: block; }
+  /* documenti */
+  #doc { line-height: 1.35; word-wrap: break-word; }
+  #doc > div { max-width: none !important; padding: 10px 16px 60px !important; margin: 0 !important; }
+  #doc img { max-width: 100%; height: auto; }
+  #doc [contenteditable] { outline: 0; background: #fffef0; min-height: 70vh; }
+  /* pdf */
+  #pdf { padding: 4px 0 60px; text-align: center; }
+  #pdf .pg { display: block; margin: 0 auto 8px; background: #fff; box-shadow: 0 0 3px #999; }
+  /* progresso */
+  #prog { position: fixed; left: 0; right: 0; bottom: 0; z-index: 30; background: #222; color: #fff; padding: 12px; font-size: 16px; display: none; }
+  #prog button { float: right; font-size: 16px; }
+  /* tema scuro */
+  html.dark, html.dark body { background: #121212; color: #ddd; }
+  #bar svg { width: 24px; height: 24px; vertical-align: middle; fill: none; stroke: #fff; stroke-width: 2.2; }
+  html.dark #crumbs { background: #1e1e1e; } html.dark #crumbs a { color: #8ab4f8; }
+  html.dark .row { border-color: #333; } html.dark .row:active { background: #263238; }
+  html.dark #info { background: #3e3200; color: #ffe08a; }
+  html.dark #info button, html.dark .msg button, html.dark .act { background: #333; color: #eee; border-color: #666; }
+  html.dark #doc, html.dark #doc * { color: #e6e6e6 !important; background-color: transparent !important; border-color: #555 !important; }
+  html.dark #doc a { color: #8ab4f8 !important; }
+  html.dark #doc [contenteditable] { background-color: #1b1b10 !important; }
+  html.dark #pdf .pg { filter: invert(1) hue-rotate(180deg); box-shadow: none; }
+</style>
+</head>
+<body>
+  <div id="bar">
+    <button id="bBack" title="Indietro">&#8592;</button>
+    <button id="bHome" title="Home">&#8962;</button>
+    <div id="title">Spartiti</div>
+    <button id="bMinus" title="Testo più piccolo" hidden>A&#8722;</button>
+    <button id="bPlus" title="Testo più grande" hidden>A+</button>
+    <button id="bUpload" title="Carica file qui" hidden>&#8679;</button>
+    <button id="bEdit" title="Modifica" hidden>&#9998;</button>
+    <button id="bSave" title="Salva su Drive" hidden>Salva</button>
+    <button id="bOffline" title="Scarica per l'uso offline" hidden>&#11015;</button>
+    <button id="bTheme" title="Chiaro / scuro"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 0 0 18z" fill="#fff"/></svg></button>
+    <button id="bFs" title="Schermo intero"><svg viewBox="0 0 24 24"><path d="M3 9V3h6M15 3h6v6M21 15v6h-6M9 21H3v-6"/></svg></button>
+  </div>
+  <div id="info"></div>
+  <div id="crumbs"></div>
+  <div id="view"></div>
+  <button id="fab" title="Mostra barra"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button>
+  <div id="prog"><button id="progStop">Stop</button><span id="progTxt"></span></div>
+  <input type="file" id="file" multiple hidden>
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
