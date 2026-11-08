@@ -71,8 +71,10 @@ function handleOAuthReturn() {
 function logout() { token = ""; tokenExp = 0; LS.del("tok"); LS.del("tokExp"); }
 
 // Serve un token: se possibile rinnovo silenzioso (la pagina viene ricaricata).
+function clientOk() { return !!CFG.clientId && !/INCOLLA/.test(CFG.clientId); }
 function needToken() {
   if (navigator.onLine === false) return Promise.reject(new AppError("Sei offline", "offline"));
+  if (!clientOk()) return Promise.reject(new AppError("Client ID mancante", "login"));
   var last = +(sessionStorage.getItem("silentAt") || 0);
   if (!authError && Date.now() - last > 60000) { login(true); return new Promise(function () {}); }
   return Promise.reject(new AppError("Serve l'accesso a Google", "login"));
@@ -280,7 +282,7 @@ function staleNote(savedAt) {
 
 function showLogin(note) {
   chrome("Spartiti", []); crumbs("");
-  var bad = !CFG.clientId || /INCOLLA/.test(CFG.clientId);
+  var bad = !clientOk();
   msg((note ? "<p>" + esc(note) + "</p>" : "") +
     (bad ? '<p class="err">Manca il Client ID in config.js (vedi README).</p>'
          : '<p><button onclick="authError=\'\';login(false)">Accedi con Google</button></p>') +

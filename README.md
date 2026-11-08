@@ -16,13 +16,13 @@ L'app deve stare su un indirizzo HTTPS (serve per il funzionamento offline). Si 
 si pubblica solo il codice; i file restano nel tuo Drive e non passano da nessun server.
 
 1. Repo pubblico `spartiti` con questi file, GitHub Pages attivo sul branch `main`.
-   Indirizzo: `https://TUONOME.github.io/spartiti/`
+   Indirizzo: `https://araleslump73.github.io/spartiti/`
 2. **Client ID Google** — https://console.cloud.google.com
    - nuovo progetto → *API e servizi → Libreria* → abilita **Google Drive API**
    - *Schermata consenso OAuth*: Esterno; aggiungi il tuo account Gmail fra gli **utenti di test**
    - *Credenziali → Crea credenziali → ID client OAuth → Applicazione web*
-     - Origini JavaScript autorizzate: `https://TUONOME.github.io`
-     - URI di reindirizzamento autorizzati: `https://TUONOME.github.io/spartiti/` (con la `/` finale)
+     - Origini JavaScript autorizzate: `https://araleslump73.github.io`
+     - URI di reindirizzamento autorizzati: `https://araleslump73.github.io/spartiti/` (con la `/` finale)
    - copia l'ID client in `config.js` e ripubblica
 3. Sul tablet, in **Firefox**: apri l'indirizzo, accedi, poi menu → *Pagina → Aggiungi a schermata Home*.
 
