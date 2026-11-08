@@ -238,6 +238,97 @@ function ptToRemHtml(h) {
 function remToPtHtml(h) {
   return h.replace(/font-size:\s*([\d.]+)rem/g, function (a, n) { return "font-size:" + (Math.round(n * 11 * 100) / 100) + "pt"; });
 }
+// Tema scuro: i colori dei Doc (testo colorato, evidenziature, bordi) si ADATTANO invece di essere cancellati,
+// sempre in modo che restino ben leggibili: ogni colore del testo viene schiarito (mantenendo la tinta) finché il
+// contrasto col fondo nero è almeno 7:1 (nero -> bianco, blu scuro -> azzurro, rosso -> rosso chiaro...).
+// Le evidenziature restano e il testo sopra è nero o bianco, quello che si legge meglio.
+// Solo per la visualizzazione: la modifica usa sempre i colori originali e non salva mai quelli adattati.
+function hexRgb(x) {
+  x = x.replace("#", "");
+  if (x.length === 3) x = x.charAt(0) + x.charAt(0) + x.charAt(1) + x.charAt(1) + x.charAt(2) + x.charAt(2);
+  return [parseInt(x.substr(0, 2), 16), parseInt(x.substr(2, 2), 16), parseInt(x.substr(4, 2), 16)];
+}
+function rgbHex(c) {
+  return "#" + c.map(function (v) { v = Math.max(0, Math.min(255, Math.round(v))); return (v < 16 ? "0" : "") + v.toString(16); }).join("");
+}
+function relLum(c) {                                           // luminanza relativa (WCAG)
+  function f(v) { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }
+  return 0.2126 * f(c[0]) + 0.7152 * f(c[1]) + 0.0722 * f(c[2]);
+}
+function contrast(a, b) {
+  var la = relLum(a), lb = relLum(b);
+  return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
+}
+function rgbToHsl(c) {
+  var r = c[0] / 255, g = c[1] / 255, b = c[2] / 255, mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+  var l = (mx + mn) / 2, s = 0, hu = 0, d = mx - mn;
+  if (d) {
+    s = l > 0.5 ? d / (2 - mx - mn) : d / (mx + mn);
+    hu = mx === r ? ((g - b) / d + (g < b ? 6 : 0)) : mx === g ? ((b - r) / d + 2) : ((r - g) / d + 4);
+    hu /= 6;
+  }
+  return [hu, s, l];
+}
+function hslToRgb(x) {
+  var hu = x[0], s = x[1], l = x[2];
+  if (!s) return [l * 255, l * 255, l * 255];
+  function f(p, q, t) {
+    if (t < 0) t += 1; if (t > 1) t -= 1;
+    return t < 1 / 6 ? p + (q - p) * 6 * t : t < 1 / 2 ? q : t < 2 / 3 ? p + (q - p) * (2 / 3 - t) * 6 : p;
+  }
+  var q = l < 0.5 ? l * (1 + s) : l + s - l * s, p = 2 * l - q;
+  return [f(p, q, hu + 1 / 3) * 255, f(p, q, hu) * 255, f(p, q, hu - 1 / 3) * 255];
+}
+var BLACK = [0, 0, 0];
+function flipHex(x) {                                          // per i bordi: scuro -> chiaro, stessa tinta
+  var hsl = rgbToHsl(hexRgb(x));
+  if (hsl[2] < 0.5) hsl[2] = 1 - hsl[2];
+  return rgbHex(hslToRgb(hsl));
+}
+function textOnDark(x) {                                       // per il testo: sempre ben leggibile su nero
+  var hsl = rgbToHsl(hexRgb(x));
+  if (hsl[2] < 0.5) hsl[2] = 1 - hsl[2];
+  var rgb = hslToRgb(hsl), n = 0;
+  while (contrast(rgb, BLACK) < 7 && hsl[2] < 1 && n++ < 60) { hsl[2] = Math.min(1, hsl[2] + 0.02); rgb = hslToRgb(hsl); }
+  return rgbHex(rgb);
+}
+var HEXRE = /#[0-9a-fA-F]{6}\b|#[0-9a-fA-F]{3}\b/g;
+function adaptStyle(style) {
+  var decls = style.split(";"), out = [], bg = null, origColor = null, colorAt = -1;
+  for (var i = 0; i < decls.length; i++) {
+    var d = decls[i], k = d.indexOf(":");
+    if (k < 0) { if (d.trim()) out.push(d.trim()); continue; }
+    var prop = d.slice(0, k).trim().toLowerCase(), val = d.slice(k + 1).trim();
+    if (prop === "background-color") {
+      var m = val.match(HEXRE);
+      if (m && Math.min.apply(null, hexRgb(m[0])) >= 245) continue;   // solo il bianco (o quasi) della pagina: via; giallo, rosa... restano
+      if (m) bg = hexRgb(m[0]);
+      out.push(prop + ":" + val);
+    } else if (prop === "color") {
+      var mc = val.match(HEXRE);
+      origColor = mc ? hexRgb(mc[0]) : null;
+      colorAt = out.length;
+      out.push("color:" + val.replace(HEXRE, textOnDark));
+    } else if (prop.indexOf("border") === 0 || prop === "text-decoration-color" || prop === "outline-color") {
+      out.push(prop + ":" + val.replace(HEXRE, flipHex));
+    } else out.push(d.trim());
+  }
+  if (bg) {                                                      // evidenziatura: testo che si legge bene sul suo colore
+    var txt = (origColor && contrast(origColor, bg) >= 7) ? rgbHex(origColor)
+            : (contrast(BLACK, bg) >= contrast([255, 255, 255], bg) ? "#000000" : "#ffffff");
+    if (colorAt >= 0) out[colorAt] = "color:" + txt; else out.push("color:" + txt);
+  }
+  return out.join(";");
+}
+function adaptDark(html) {
+  // gli attributi contengono entità (&quot;Arial&quot;): si decodificano prima di dividere per ";", poi si ricodificano
+  return html.replace(/style="([^"]*)"/g, function (a, s) {
+    var r = adaptStyle(s.replace(/&quot;/g, '"').replace(/&amp;/g, "&"));
+    return 'style="' + r.replace(/&/g, "&amp;").replace(/"/g, "&quot;") + '"';
+  });
+}
+function isDarkTheme() { return document.documentElement.classList.contains("dark"); }
+
 // CSS dei Doc: confinato dentro #doc, pt -> rem (così A-/A+ ingrandisce tutto)
 function docCss(css) {
   css = css.replace(/@import[^;]*;/g, "")
@@ -537,7 +628,12 @@ function renderDoc(html) {
     });
     f = { css: p.css, cls: p.cls, body: p.body.innerHTML };
   }
-  view.innerHTML = "<style>" + docCss(f.css) + '</style><div id="doc"><div class="' + esc(f.cls) + '">' + ptToRemHtml(f.body) + "</div></div>";
+  var body = ptToRemHtml(f.body);
+  if (isDarkTheme()) body = adaptDark(body);
+  view.innerHTML = "<style>" + docCss(f.css) + '</style><div id="doc"><div class="' + esc(f.cls) + '">' + body + "</div></div>";
+  cur.theme = function () {                    // cambio tema: si ridisegna il Doc mantenendo la posizione
+    var y = window.pageYOffset; renderDoc(html); window.scrollTo(0, y);
+  };
   // i Doc di spartiti rimandano quasi sempre a PDF: si precarica pdf.js a riposo, così il primo PDF si apre prima
   setTimeout(function () { loadPdfjs().catch(function () {}); }, 1500);
 }
@@ -661,7 +757,7 @@ async function showEdit(id, seq) {
   var p = parseDoc(html);
   chrome("Modifica: " + m.name, ["bMinus", "bPlus", "bSave"]);
   info("Modifica il testo e poi tocca <b>Salva</b>. Drive conserva la cronologia delle versioni.");
-  view.innerHTML = "<style>" + docCss(p.css) + '</style><div id="doc"><div class="' + esc(p.cls) + '" contenteditable="true">' + ptToRemHtml(p.body.innerHTML) + "</div></div>";
+  view.innerHTML = "<style>" + docCss(p.css) + '</style><div id="doc" class="paper"><div class="' + esc(p.cls) + '" contenteditable="true">'  + ptToRemHtml(p.body.innerHTML) + "</div></div>";
   var ed = view.querySelector("[contenteditable]");
   var dirty = false;
   ed.addEventListener("input", function () { dirty = true; });

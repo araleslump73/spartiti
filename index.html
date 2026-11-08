@@ -54,6 +54,7 @@
   #doc { line-height: 1.3; word-wrap: break-word; }
   #doc > div { max-width: none !important; padding: 6px 10px 50px !important; margin: 0 !important; }
   #doc img { max-width: 100%; height: auto; }
+  #doc.paper { background: #fff; color: #000; }   /* editor: foglio chiaro con i colori originali */
   #doc [contenteditable] { outline: 0; background: #fffef0; min-height: 70vh; }
   /* pdf */
   #pdf { padding: 0 0 40px; text-align: left; }
@@ -69,9 +70,8 @@
   html.dark .row .off { color: #7ddc83; }
   html.dark #info { background: #3e3200; color: #ffe08a; }
   html.dark #info button, html.dark .msg button, html.dark .act { background: #333; color: #fff; border-color: #888; }
-  html.dark #doc, html.dark #doc * { color: #fff !important; background-color: transparent !important; border-color: #666 !important; }
-  html.dark #doc a { color: #7db3ff !important; }
-  html.dark #doc [contenteditable] { background-color: #0d0d05 !important; }
+  html.dark #doc { color: #fff; }
+  html.dark #doc:not(.paper) a { color: #7db3ff !important; }
   html.dark #pdf .pg { background: #000; }   /* i colori si invertono quando la pagina viene disegnata */
   html.dark .row input[type=search] { background: #222; color: #fff; border: 1px solid #777; }
 </style>
