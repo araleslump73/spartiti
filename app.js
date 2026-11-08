@@ -518,8 +518,9 @@ async function renderPdf(blob, seq) {
     });
   }
   async function draw(p) {
+    if (p.busy) return;                  // se cambia lo zoom mentre disegna, a fine disegno si ricontrolla
     var w = cssWidth();
-    if (p.done === w || p.busy) return;
+    if (p.done === w) return;
     p.busy = true;
     try {
       var pg = await pdf.getPage(p.n), vp1 = pg.getViewport({ scale: 1 });
@@ -530,12 +531,17 @@ async function renderPdf(blob, seq) {
       await pg.render({ canvasContext: c.getContext("2d"), viewport: vp }).promise;
       p.ar = vp1.height / vp1.width;
       p.done = w;
-    } catch (e) { /* pagina saltata */ }
+    } catch (e) { p.err = (p.err || 0) + 1; }
     p.busy = false;
+    if (p.vis && p.done !== cssWidth() && (p.err || 0) < 3) draw(p);   // lo zoom è cambiato nel frattempo
   }
   size();
   obs = new IntersectionObserver(function (es) {
-    es.forEach(function (e) { if (e.isIntersecting) draw(pages[e.target.dataset.n - 1]); });
+    es.forEach(function (e) {
+      var p = pages[e.target.dataset.n - 1];
+      p.vis = e.isIntersecting;
+      if (p.vis) draw(p);
+    });
   }, { rootMargin: "1200px 0px" });
   pages.forEach(function (p) { obs.observe(p.c); });
   cur.onPinch = size;   // durante il pinch ridimensiona solo (veloce); a fine gesto si ridisegna
