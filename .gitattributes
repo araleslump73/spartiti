@@ -1,0 +1,3 @@
+# i file binari non vanno mai convertiti negli a-capo
+*.pdf binary
+*.png binary
