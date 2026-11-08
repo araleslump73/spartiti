@@ -1,12 +1,15 @@
 // Service worker: tiene l'app (e pdf.js) in cache per l'uso offline,
 // e serve dalla cache le immagini dei Doc scaricate per l'offline.
-var V = "spartiti-v9";   // cambiare a ogni pubblicazione per aggiornare l'app sul tablet
+var V = "spartiti-v10";   // cambiare a ogni pubblicazione per aggiornare l'app sul tablet
 var IMG = "spartiti-img";
 var SHELL = ["./", "index.html", "app.js", "config.js", "manifest.webmanifest", "icon.svg", "icon-192.png", "icon-512.png",
              "pdfjs/pdf.min.js", "pdfjs/pdf.worker.min.js"];
 
 self.addEventListener("install", function (e) {
-  e.waitUntil(caches.open(V).then(function (c) { return c.addAll(SHELL); }));
+  // cache:"reload" salta la cache HTTP (GitHub Pages tiene i file 10 minuti): si installano sempre i file nuovi
+  e.waitUntil(caches.open(V).then(function (c) {
+    return c.addAll(SHELL.map(function (u) { return new Request(u, { cache: "reload" }); }));
+  }));
   self.skipWaiting();
 });
 
@@ -21,7 +24,7 @@ self.addEventListener("activate", function (e) {
 function swr(req, key) {
   return caches.open(V).then(function (c) {
     return c.match(key || req, { ignoreSearch: true }).then(function (hit) {
-      var net = fetch(req).then(function (r) {
+      var net = fetch(req.url, { cache: "no-cache" }).then(function (r) {
         if (r && r.ok) c.put(key || req, r.clone());
         return r;
       }).catch(function () { return hit; });
