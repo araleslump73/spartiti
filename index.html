@@ -21,7 +21,13 @@
   body { touch-action: pan-x pan-y; font-size: 1rem; }   /* niente zoom nativo: il pinch lo gestisce l'app */
   /* barra compatta; si nasconde scorrendo verso il basso e riappare scorrendo verso l'alto */
   #bar { position: sticky; top: 0; z-index: 10; background: #1a1a1a; color: #fff; display: flex; align-items: center; padding: 2px 3px; transition: transform .18s; }
-  #bar.hid { transform: translateY(-105%); }
+  #bar { will-change: transform; }
+  #bar.hid { transform: translateY(-105%); visibility: hidden; transition: transform .18s, visibility 0s .18s; }   /* nascosta del tutto: niente residui neri */
+  .sortbar { padding: 3px 8px; font-size: .9rem; border-bottom: 1px solid #aaa; }
+  .sortbar .act { font-size: .9rem; padding: 3px 10px; margin: 2px 4px; }
+  .sortbar .act.on { background: #1a1a1a; color: #fff; }
+  html.dark .sortbar { border-color: #444; }
+  html.dark .sortbar .act.on { background: #ddd; color: #000; }
   #bar button { background: #444; color: #fff; border: 0; border-radius: 6px; font-size: 19px; min-width: 44px; height: 44px; margin: 0 2px; padding: 0 8px; flex: none; }
   #bar button:active { background: #777; }
   #bar button[hidden] { display: none; }

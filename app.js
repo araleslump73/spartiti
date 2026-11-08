@@ -505,12 +505,28 @@ async function renderCrumbs(id, seq) {
 
 // ------------------------------------------------------------------ viste
 var navSeq = 0;
+// Posizione di scorrimento per ogni pagina: tornando indietro (da un link, dal PDF...) si riparte dalla stessa riga.
+try { history.scrollRestoration = "manual"; } catch (e) {}
+var scrollPos = {}, shownHash = null, shownReady = false, pendingY = 0;
+try { scrollPos = JSON.parse(sessionStorage.getItem("sp") || "{}") || {}; } catch (e) {}
+function saveScroll() {
+  if (shownHash === null || !shownReady) return;      // la pagina precedente non era ancora disegnata: non sovrascrivere
+  scrollPos[shownHash] = Math.round(window.pageYOffset);
+  try { sessionStorage.setItem("sp", JSON.stringify(scrollPos)); } catch (e) {}
+}
+function applyPending() {                              // da chiamare appena il contenuto è disegnato
+  shownReady = true;
+  if (pendingY > 0) { lastY = pendingY; window.scrollTo(0, pendingY); }   // lastY: la barra non si nasconde per questo salto
+  pendingY = 0;
+}
 async function route() {
   var seq = ++navSeq;
   if (cur.cleanup) cur.cleanup();
+  saveScroll();
+  var h = location.hash || "#/";
+  shownHash = h; shownReady = false; pendingY = scrollPos[h] || 0;
   cur = {}; info(""); crumbs(""); updateNet();
   $("#bar").classList.remove("hid"); barHid = false; lastY = 0; window.scrollTo(0, 0);   // nuova pagina: barra visibile, in cima
-  var h = location.hash || "#/";
   var m = h.match(/^#\/(d|f|e|s|off)?\/?(.*)$/) || [];
   var kind = m[1], arg = decodeURIComponent(m[2] || "");
   try {
@@ -519,11 +535,12 @@ async function route() {
       if (!haveToken() && authError) return showLogin(authError === "interaction_required" || authError === "consent_required" ? "" : "Accesso non riuscito (" + authError + ").");
       return go("#/d/root");
     }
-    if (kind === "off") return await showOffline(seq);
-    if (kind === "d") return await showFolder(arg, seq);
-    if (kind === "f") return await showFile(arg, seq);
-    if (kind === "e") return await showEdit(arg, seq);
-    if (kind === "s") return await showSearch(arg, seq);
+    if (kind === "off") await showOffline(seq);
+    else if (kind === "d") await showFolder(arg, seq);
+    else if (kind === "f") await showFile(arg, seq);
+    else if (kind === "e") await showEdit(arg, seq);
+    else if (kind === "s") await showSearch(arg, seq);
+    if (seq === navSeq) applyPending();                // per le viste che non l'hanno già fatto
   } catch (e) {
     if (seq === navSeq) showError(e);
   }
@@ -538,6 +555,43 @@ function rowsHtml(items, offKeys) {
   }).join("");
 }
 
+// Ordinamento (nome / data / tipo): scelta ricordata. Le cartelle restano sempre in cima.
+// Data: prima le più recenti; toccando di nuovo lo stesso criterio si inverte l'ordine.
+var sortKey = LS.get("sortKey", "name"), sortDesc = LS.get("sortDesc", sortKey === "date" ? "1" : "0") === "1";
+function typeKey(f) {
+  var t = target(f);
+  var ext = (/\.([A-Za-z0-9]+)$/.exec(f.name) || [])[1];
+  return (t.mimeType || "") + "|" + (ext ? ext.toLowerCase() : "");
+}
+function sortItems(items) {
+  var nat = function (a, b) { return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" }); };
+  var dir = sortDesc ? -1 : 1;
+  return items.slice().sort(function (a, b) {
+    var fa = target(a).mimeType === FOLDER, fb = target(b).mimeType === FOLDER;
+    if (fa !== fb) return fa ? -1 : 1;
+    var c = 0;
+    if (sortKey === "date") c = (a.modifiedTime || "") < (b.modifiedTime || "") ? -1 : (a.modifiedTime || "") > (b.modifiedTime || "") ? 1 : 0;
+    else if (sortKey === "type") { var ka = typeKey(a), kb = typeKey(b); c = ka < kb ? -1 : ka > kb ? 1 : 0; }
+    return (c * dir) || nat(a, b);
+  });
+}
+function sortBarHtml() {
+  return '<div class="sortbar">Ordina:' + [["name", "Nome"], ["date", "Data"], ["type", "Tipo"]].map(function (k) {
+    var on = sortKey === k[0];
+    return '<button type="button" class="act' + (on ? " on" : "") + '" data-sort="' + k[0] + '">' + k[1] + (on ? (sortDesc ? " ↓" : " ↑") : "") + "</button>";
+  }).join("") + "</div>";
+}
+function bindSort(redraw) {
+  Array.prototype.forEach.call(view.querySelectorAll("[data-sort]"), function (b) {
+    b.onclick = function () {
+      var k = b.dataset.sort;
+      if (k === sortKey) sortDesc = !sortDesc; else { sortKey = k; sortDesc = k === "date"; }
+      LS.set("sortKey", sortKey); LS.set("sortDesc", sortDesc ? "1" : "0");
+      redraw();
+    };
+  });
+}
+
 function folderSig(ch) { return ch.map(function (f) { return f.id + "|" + f.name; }).join("\n"); }
 
 async function paintFolder(id, seq, r) {
@@ -549,9 +603,12 @@ async function paintFolder(id, seq, r) {
   var top = id === "root" || !(r.meta.parents) ?
     '<a class="row" href="#/off"><span class="ic">📥</span><span class="nm">Scaricati per l\'offline</span></a>' +
     '<form class="row" id="sf"><input id="q" type="search" placeholder="Cerca nel Drive…"> <button class="act">Cerca</button></form>' : "";
-  view.innerHTML = top + (r.children.length ? rowsHtml(r.children, keys[0].concat(keys[1])) : '<div class="msg">Cartella vuota.</div>');
+  var y = window.pageYOffset;                  // un ridisegno (aggiornamento dalla rete, cambio ordine) non sposta la lettura
+  view.innerHTML = top + (r.children.length ? sortBarHtml() + rowsHtml(sortItems(r.children), keys[0].concat(keys[1])) : '<div class="msg">Cartella vuota.</div>');
+  bindSort(function () { paintFolder(id, seq, r); });
   var sf = $("#sf");
   if (sf) sf.onsubmit = function (e) { e.preventDefault(); var q = $("#q").value.trim(); if (q) go("#/s/" + encodeURIComponent(q)); };
+  if (shownReady) { lastY = y; window.scrollTo(0, y); } else applyPending();
   renderCrumbs(id, seq);
 }
 
@@ -573,7 +630,14 @@ async function showSearch(q, seq) {
   if (!canTryNet()) throw new AppError("La ricerca funziona solo online.");
   var items = await dSearch(q);
   if (seq !== navSeq) return;
-  view.innerHTML = items.length ? rowsHtml(items, await DB.keys("files")) : '<div class="msg">Nessun risultato.</div>';
+  var keys = await DB.keys("files");
+  function paint() {
+    var y = window.pageYOffset;
+    view.innerHTML = items.length ? sortBarHtml() + rowsHtml(sortItems(items), keys) : '<div class="msg">Nessun risultato.</div>';
+    bindSort(paint);
+    if (shownReady) { lastY = y; window.scrollTo(0, y); }
+  }
+  paint();
 }
 
 async function showFile(id, seq) {
@@ -631,6 +695,7 @@ function renderDoc(html) {
   var body = ptToRemHtml(f.body);
   if (isDarkTheme()) body = adaptDark(body);
   view.innerHTML = "<style>" + docCss(f.css) + '</style><div id="doc"><div class="' + esc(f.cls) + '">' + body + "</div></div>";
+  applyPending();
   cur.theme = function () {                    // cambio tema: si ridisegna il Doc mantenendo la posizione
     var y = window.pageYOffset; renderDoc(html); window.scrollTo(0, y);
   };
@@ -732,6 +797,7 @@ async function renderPdf(blob, seq) {
     });
   }, { rootMargin: "1000px 0px" });
   pages.forEach(function (p) { obs.observe(p.c); });
+  applyPending();
   // zoom del PDF: A-/A+ e pinch. Durante il pinch cambia solo la dimensione; a fine gesto ridisegna nitido.
   cur.zlim = [0.5, 4];
   cur.theme = function () { pages.forEach(function (p) { p.done = 0; }); redraw(); };   // cambio tema: ridisegna
