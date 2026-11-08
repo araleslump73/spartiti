@@ -21,6 +21,8 @@
   #bar button:active { background: #777; }
   #bar button[hidden] { display: none; }
   #title { flex: 1; font-size: 18px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 0 8px; }
+  #net { flex: none; font-size: 13px; padding: 3px 8px; border-radius: 10px; margin: 0 4px; background: #2e7d32; color: #fff; }
+  #net.off { background: #e65100; }
   #info { background: #fff3cd; color: #5c4400; padding: 8px 12px; font-size: 16px; }
   #info:empty { display: none; }
   #info a { color: inherit; font-weight: bold; }
@@ -69,6 +71,7 @@
     <button id="bBack" title="Indietro">&#8592;</button>
     <button id="bHome" title="Home">&#8962;</button>
     <div id="title">Spartiti</div>
+    <span id="net" class="on">online</span>
     <button id="bMinus" title="Testo più piccolo" hidden>A&#8722;</button>
     <button id="bPlus" title="Testo più grande" hidden>A+</button>
     <button id="bUpload" title="Carica file qui" hidden>&#8679;</button>

@@ -274,10 +274,19 @@ function icon(mt) {
   return "📃";
 }
 function fmtDate(t) { var d = new Date(t); return d.toLocaleDateString() + " " + d.toLocaleTimeString().slice(0, 5); }
+// Indicatore online/offline nella barra (nessun banner: non occupa spazio)
+function updateNet() {
+  var off = navigator.onLine === false || !!cur.stale;
+  var n = $("#net");
+  n.textContent = off ? "offline" : "online";
+  n.className = off ? "off" : "on";
+}
+// Se sei online ma senza accesso a Google, un banner discreto propone il login
 function staleNote(savedAt) {
-  var why = navigator.onLine === false ? "Sei offline" : (!haveToken() ? "Non collegato a Google" : "Drive non raggiungibile");
-  return why + ": copia salvata il " + fmtDate(savedAt) +
-    (navigator.onLine === false ? "" : ' <button onclick="login(false)">Accedi</button>');
+  cur.stale = true; updateNet();
+  if (navigator.onLine === false) return "";
+  return (!haveToken() ? "Non collegato a Google" : "Drive non raggiungibile") +
+    ": copia del " + fmtDate(savedAt) + ' <button onclick="login(false)">Accedi</button>';
 }
 
 function showLogin(note) {
@@ -355,7 +364,7 @@ var navSeq = 0;
 async function route() {
   var seq = ++navSeq;
   if (cur.cleanup) cur.cleanup();
-  cur = {}; info(""); crumbs("");
+  cur = {}; info(""); crumbs(""); updateNet();
   var h = location.hash || "#/";
   var m = h.match(/^#\/(d|f|e|s|off)?\/?(.*)$/) || [];
   var kind = m[1], arg = decodeURIComponent(m[2] || "");
@@ -687,7 +696,8 @@ $("#bOffline").onclick = function () { if (cur.id) doOffline(cur.id); };
 document.addEventListener("fullscreenchange", onFsChange);
 document.addEventListener("mozfullscreenchange", onFsChange);
 window.addEventListener("hashchange", route);
-window.addEventListener("online", function () { if (/^#\/(off)?$/.test(location.hash)) route(); });
+window.addEventListener("online", function () { updateNet(); if (/^#\/(off)?$/.test(location.hash)) route(); });
+window.addEventListener("offline", updateNet);
 
 if (window.SPARTITI_MOCK) window.SPARTITI_MOCK();   // solo per i test locali (mock.js non viene pubblicato)
 applyZoom();
