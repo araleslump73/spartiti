@@ -173,12 +173,14 @@ var DB = {
   open: function () {
     if (DB.db) return Promise.resolve(DB.db);
     return new Promise(function (res, rej) {
-      var r = indexedDB.open("spartiti", 1);
+      var r = indexedDB.open("spartiti", 2);
       r.onupgradeneeded = function () {
         var d = r.result;
-        d.createObjectStore("files", { keyPath: "id" });     // {id, meta, html|blob, pins[], savedAt}
-        d.createObjectStore("folders", { keyPath: "id" });   // {id, meta, children[], pins[], savedAt}
-        d.createObjectStore("pins", { keyPath: "id" });      // {id, name, mimeType, savedAt, count}
+        ["files",    // {id, meta, html|blob, pins[], savedAt}
+         "folders",  // {id, meta, children[], pins[], savedAt}      (scaricate per l'offline)
+         "pins",     // {id, name, mimeType, savedAt, count}
+         "lists"     // {id, meta, children[], t}                    (elenchi visti: aprono subito)
+        ].forEach(function (n) { if (!d.objectStoreNames.contains(n)) d.createObjectStore(n, { keyPath: "id" }); });
       };
       r.onsuccess = function () { DB.db = r.result; res(DB.db); };
       r.onerror = function () { rej(r.error); };
@@ -251,12 +253,13 @@ function docCss(css) {
 }
 
 // ------------------------------------------------------------------ preferenze: zoom, tema, schermo intero
-var zoom = parseFloat(LS.get("zoom", "1.3")) || 1.3;
+var zoom = parseFloat(LS.get("zoom", "1.5")) || 1.5;   // testo di Doc ed elenchi (1.5 = comodo da leggere)
 function applyZoom() { document.documentElement.style.fontSize = (16 * zoom) + "px"; }
+function clampZ(z, lo, hi) { return Math.max(lo, Math.min(hi, z)); }
 function setZoom(d) {
-  zoom = Math.max(0.6, Math.min(3.5, Math.round((zoom + d) * 10) / 10));
+  if (cur.zstep) return cur.zstep(d);        // PDF: ha il suo zoom (larghezza pagina)
+  zoom = clampZ(Math.round((zoom + d) * 10) / 10, 0.6, 3.5);
   LS.set("zoom", String(zoom)); applyZoom();
-  if (cur.onZoom) cur.onZoom();
 }
 function toggleTheme() {
   var dark = document.documentElement.classList.toggle("dark");
@@ -343,16 +346,20 @@ function showError(e) {
 // ------------------------------------------------------------------ dati: rete con ripiego sulla copia offline
 function canTryNet() { return navigator.onLine !== false; }
 
+async function cachedFolder(id) { return (await DB.get("folders", id)) || (await DB.get("lists", id)); }
+
 async function loadFolder(id) {
-  var cached = await DB.get("folders", id);
+  var cached = await cachedFolder(id);
   if (canTryNet() && (haveToken() || !cached)) {
     try {
       var r = await Promise.all([dMeta(id), dChildren(id)]);
-      if (cached) { cached.meta = r[0]; cached.children = r[1]; cached.savedAt = Date.now(); DB.put("folders", cached); }
+      var pinned = await DB.get("folders", id);
+      if (pinned) { pinned.meta = r[0]; pinned.children = r[1]; pinned.savedAt = Date.now(); DB.put("folders", pinned); }
+      DB.put("lists", { id: id, meta: r[0], children: r[1], t: Date.now() });
       return { meta: r[0], children: r[1], live: true };
     } catch (e) { if (!cached || !isNetErr(e)) throw e; }
   }
-  if (cached) return { meta: cached.meta, children: cached.children, live: false, savedAt: cached.savedAt };
+  if (cached) return { meta: cached.meta, children: cached.children, live: false, savedAt: cached.savedAt || cached.t };
   throw new AppError("Questa cartella non è stata scaricata per l'offline.");
 }
 
@@ -384,6 +391,8 @@ async function metaAny(id) {
 }
 var crumbCache = {};
 async function renderCrumbs(id, seq) {
+  var saved = LS.get("cr:" + id, "");
+  if (saved) crumbs(saved);                   // percorso già noto: appare subito, poi si aggiorna
   var chain = [], n = 0;
   while (id && n++ < 12) {
     var m = crumbCache[id] || await metaAny(id).catch(function () { return null; });
@@ -393,7 +402,9 @@ async function renderCrumbs(id, seq) {
     id = m.parents && m.parents[0];
   }
   if (seq !== navSeq) return;
-  crumbs(chain.map(function (m) { return '<a href="#/d/' + m.id + '">' + esc(m.name) + "</a>"; }).join(" &#8250; "));
+  var html = chain.map(function (m) { return '<a href="#/d/' + m.id + '">' + esc(m.name) + "</a>"; }).join(" &#8250; ");
+  LS.set("cr:" + id, html);
+  crumbs(html);
 }
 
 // ------------------------------------------------------------------ viste
@@ -402,6 +413,7 @@ async function route() {
   var seq = ++navSeq;
   if (cur.cleanup) cur.cleanup();
   cur = {}; info(""); crumbs(""); updateNet();
+  $("#bar").classList.remove("hid"); barHid = false; lastY = 0; window.scrollTo(0, 0);   // nuova pagina: barra visibile, in cima
   var h = location.hash || "#/";
   var m = h.match(/^#\/(d|f|e|s|off)?\/?(.*)$/) || [];
   var kind = m[1], arg = decodeURIComponent(m[2] || "");
@@ -430,25 +442,38 @@ function rowsHtml(items, offKeys) {
   }).join("");
 }
 
-async function showFolder(id, seq) {
-  chrome("…", []); msg("Carico…");
-  var r = await loadFolder(id);
+function folderSig(ch) { return ch.map(function (f) { return f.id + "|" + f.name; }).join("\n"); }
+
+async function paintFolder(id, seq, r) {
+  var keys = await Promise.all([DB.keys("files"), DB.keys("folders")]);
   if (seq !== navSeq) return;
-  cur = { kind: "folder", id: id, meta: r.meta };
-  chrome(r.meta.name, r.live ? ["bUpload", "bOffline"] : []);
-  if (!r.live) info(staleNote(r.savedAt));
-  var keys = (await DB.keys("files")).concat(await DB.keys("folders"));
+  cur = { kind: "folder", id: id, meta: r.meta, sig: folderSig(r.children) };
+  chrome(r.meta.name, r.live ? ["bMinus", "bPlus", "bUpload", "bOffline"] : ["bMinus", "bPlus"]);
+  info(r.live ? "" : staleNote(r.savedAt));
   var top = id === "root" || !(r.meta.parents) ?
     '<a class="row" href="#/off"><span class="ic">📥</span><span class="nm">Scaricati per l\'offline</span></a>' +
-    '<form class="row" id="sf"><input id="q" type="search" placeholder="Cerca nel Drive…" style="flex:1;font-size:19px;padding:8px"> <button class="act">Cerca</button></form>' : "";
-  view.innerHTML = top + (r.children.length ? rowsHtml(r.children, keys) : '<div class="msg">Cartella vuota.</div>');
+    '<form class="row" id="sf"><input id="q" type="search" placeholder="Cerca nel Drive…"> <button class="act">Cerca</button></form>' : "";
+  view.innerHTML = top + (r.children.length ? rowsHtml(r.children, keys[0].concat(keys[1])) : '<div class="msg">Cartella vuota.</div>');
   var sf = $("#sf");
   if (sf) sf.onsubmit = function (e) { e.preventDefault(); var q = $("#q").value.trim(); if (q) go("#/s/" + encodeURIComponent(q)); };
   renderCrumbs(id, seq);
 }
 
+async function showFolder(id, seq) {
+  chrome("…", ["bMinus", "bPlus"]);
+  // apre subito l'ultimo elenco visto (se c'è), poi aggiorna dalla rete senza far aspettare
+  var cached = await cachedFolder(id);
+  if (seq !== navSeq) return;
+  if (cached) await paintFolder(id, seq, { meta: cached.meta, children: cached.children, live: canTryNet() });
+  else msg("Carico…");
+  var r = await loadFolder(id);
+  if (seq !== navSeq) return;
+  if (cached && r.live && cur.sig === folderSig(r.children)) return;   // nessuna novità: non ridisegnare
+  await paintFolder(id, seq, r);
+}
+
 async function showSearch(q, seq) {
-  chrome("Ricerca: " + q, []); msg("Cerco…");
+  chrome("Ricerca: " + q, ["bMinus", "bPlus"]); msg("Cerco…");
   if (!canTryNet()) throw new AppError("La ricerca funziona solo online.");
   var items = await dSearch(q);
   if (seq !== navSeq) return;
@@ -463,8 +488,7 @@ async function showFile(id, seq) {
   var m = r.meta;
   cur = { kind: "file", id: id, meta: m };
   if (!r.live) info(staleNote(r.savedAt));
-  var parent = m.parents && m.parents[0];
-  if (parent) renderCrumbs(parent, seq);
+  // nei documenti niente barra del percorso: serve spazio per leggere (c'è il tasto indietro)
   if (r.html !== undefined) {
     chrome(m.name, ["bMinus", "bPlus"].concat(r.live ? ["bEdit", "bOffline"] : []));
     return renderDoc(r.html);
@@ -506,60 +530,85 @@ async function renderPdf(blob, seq) {
   var lib = await loadPdfjs();
   var data = new Uint8Array(await new Response(blob).arrayBuffer());
   // isEvalSupported:false chiude una vulnerabilità nota delle versioni vecchie di pdf.js
-  var task = lib.getDocument({ data: data, isEvalSupported: false });
-  var pdf = await task.promise;
+  var pdf = await lib.getDocument({ data: data, isEvalSupported: false }).promise;
   if (seq !== navSeq) { pdf.destroy(); return; }
   view.innerHTML = '<div id="pdf"></div>';
-  var box = $("#pdf"), pages = [], obs;
+  var box = $("#pdf"), pages = [], timer = 0, obs;
+  var MAXPX = 2200;                                  // lato massimo di una pagina disegnata (memoria del tablet)
+  var pz = parseFloat(LS.get("pzoom", "1")) || 1;    // 1 = pagina larga come lo schermo
   var first = await pdf.getPage(1), base = first.getViewport({ scale: 1 });
-  function cssWidth() { return Math.round(view.clientWidth * zoom / 1.3); }
+  if (seq !== navSeq) { pdf.destroy(); return; }
+  function cssWidth() { return Math.round(view.clientWidth * pz); }
   for (var i = 1; i <= pdf.numPages; i++) {
     var c = document.createElement("canvas");
     c.className = "pg"; c.dataset.n = i;
     box.appendChild(c);
-    pages.push({ n: i, c: c, done: 0 });
+    pages.push({ n: i, c: c, done: 0, gen: 0, vis: false, task: null, ar: 0 });
   }
-  function size() {
+  function size() {                                  // solo dimensioni CSS: immediato, la pagina si "stira"
     var w = cssWidth();
     pages.forEach(function (p) {
       p.c.style.width = w + "px";
       p.c.style.height = Math.round(w * (p.ar || base.height / base.width)) + "px";
     });
   }
-  async function draw(p) {
-    if (p.busy) return;                  // se cambia lo zoom mentre disegna, a fine disegno si ricontrolla
+  function release(p) {                              // pagina lontana: libera la memoria
+    p.gen++;
+    if (p.task) { try { p.task.cancel(); } catch (e) {} p.task = null; }
+    if (p.done) { p.c.width = 1; p.c.height = 1; p.done = 0; }
+  }
+  function draw(p) {
     var w = cssWidth();
     if (p.done === w) return;
-    p.busy = true;
-    try {
-      var pg = await pdf.getPage(p.n), vp1 = pg.getViewport({ scale: 1 });
-      var scale = w / vp1.width * Math.min(window.devicePixelRatio || 1, 2);
+    var gen = ++p.gen;                               // un nuovo disegno rende obsoleto quello in corso
+    if (p.task) { try { p.task.cancel(); } catch (e) {} p.task = null; }
+    pdf.getPage(p.n).then(function (pg) {
+      if (gen !== p.gen) return;
+      var vp1 = pg.getViewport({ scale: 1 });
+      var scale = w / vp1.width * Math.min(window.devicePixelRatio || 1, 1.5);
+      scale = Math.min(scale, MAXPX / Math.max(vp1.width, vp1.height));
       var vp = pg.getViewport({ scale: scale });
-      var c = p.c; c.width = vp.width; c.height = vp.height;
-      c.style.height = Math.round(w * vp1.height / vp1.width) + "px";
-      await pg.render({ canvasContext: c.getContext("2d"), viewport: vp }).promise;
-      p.ar = vp1.height / vp1.width;
-      p.done = w;
-    } catch (e) {
-      p.err = (p.err || 0) + 1;
+      // si disegna su una tela nascosta: quella visibile resta intatta (mai nera) finché il disegno non è pronto
+      var off = document.createElement("canvas");
+      off.width = Math.ceil(vp.width); off.height = Math.ceil(vp.height);
+      var t = pg.render({ canvasContext: off.getContext("2d"), viewport: vp });
+      p.task = t;
+      return t.promise.then(function () {
+        if (gen !== p.gen) return;
+        p.task = null;
+        var c = p.c;
+        c.width = off.width; c.height = off.height;
+        c.getContext("2d").drawImage(off, 0, 0);
+        off.width = off.height = 1;
+        p.ar = vp1.height / vp1.width;
+        p.done = w;
+        size();
+      });
+    }).catch(function (e) {
+      if (e && e.name === "RenderingCancelledException") return;
       info('<span class="err">PDF pagina ' + p.n + ": " + esc(e && e.message || e) + "</span>");
-    }
-    p.busy = false;
-    if (/debug/.test(location.search)) info("DBG z=" + zoom + " cw=" + cssWidth() + " p" + p.n + " done=" + p.done + " vis=" + p.vis + " err=" + (p.err || 0) + " dpr=" + (window.devicePixelRatio || 1) + " cvs=" + p.c.width + "x" + p.c.height);
-    if (p.vis && p.done !== cssWidth() && (p.err || 0) < 3) draw(p);   // lo zoom è cambiato nel frattempo
+    });
   }
+  function redraw() { pages.forEach(function (p) { if (p.vis) draw(p); }); }
   size();
   obs = new IntersectionObserver(function (es) {
     es.forEach(function (e) {
       var p = pages[e.target.dataset.n - 1];
       p.vis = e.isIntersecting;
-      if (p.vis) draw(p);
+      if (p.vis) draw(p); else release(p);
     });
-  }, { rootMargin: "1200px 0px" });
+  }, { rootMargin: "1000px 0px" });
   pages.forEach(function (p) { obs.observe(p.c); });
-  cur.onPinch = size;   // durante il pinch ridimensiona solo (veloce); a fine gesto si ridisegna
-  cur.onZoom = function () { size(); pages.forEach(function (p) { p.done = 0; obs.unobserve(p.c); obs.observe(p.c); }); };
-  cur.cleanup = function () { obs.disconnect(); pdf.destroy(); };
+  // zoom del PDF: A-/A+ e pinch. Durante il pinch cambia solo la dimensione; a fine gesto ridisegna nitido.
+  cur.zget = function () { return pz; };
+  cur.zset = function (z, commit) {
+    pz = clampZ(z, 0.5, 4);
+    if (commit) pz = Math.round(pz * 20) / 20;
+    size();
+    if (commit) { LS.set("pzoom", String(pz)); clearTimeout(timer); timer = setTimeout(redraw, 150); }
+  };
+  cur.zstep = function (d) { cur.zset(pz * (d > 0 ? 1.2 : 1 / 1.2), true); };
+  cur.cleanup = function () { clearTimeout(timer); obs.disconnect(); pages.forEach(release); pdf.destroy(); };
 }
 
 // ---- modifica di un Google Doc (solo online)
@@ -711,7 +760,7 @@ async function doOffline(id) {
 }
 
 async function showOffline(seq) {
-  chrome("Scaricati per l'offline", []);
+  chrome("Scaricati per l'offline", ["bMinus", "bPlus"]);
   var pins = await DB.all("pins");
   if (seq !== navSeq) return;
   var est = "";
@@ -745,30 +794,44 @@ $("#bUpload").onclick = startUpload;
 $("#bEdit").onclick = function () { go("#/e/" + cur.id); };
 $("#bSave").onclick = function () { if (cur.save) cur.save().catch(function (e) { info('<span class="err">Non salvato: ' + esc(e.message || e) + "</span>"); }); };
 $("#bOffline").onclick = function () { if (cur.id) doOffline(cur.id); };
-// Pinch zoom con due dita: scala il testo dei Doc e le pagine dei PDF, come A+/A−.
-// (Il zoom nativo di Firefox qui non agisce, quindi lo gestiamo noi.)
-var pinch = null;
+// Pinch zoom con due dita: come A+/A−, scala il testo (Doc, elenchi) o la larghezza della pagina (PDF).
+// (Lo zoom nativo di Firefox qui non agisce, quindi lo gestiamo noi.)
+var pinch = null, pinchRaf = 0;
 function touchDist(t) { var dx = t[0].clientX - t[1].clientX, dy = t[0].clientY - t[1].clientY; return Math.sqrt(dx * dx + dy * dy); }
-view.addEventListener("touchstart", function (e) {
-  if (e.touches.length === 2) pinch = { d: touchDist(e.touches), z: zoom };
+function pinchApply(z, commit) {
+  if (cur.zset) return cur.zset(z, commit);
+  zoom = clampZ(commit ? Math.round(z * 20) / 20 : z, 0.6, 3.5);
+  applyZoom();
+  if (commit) LS.set("zoom", String(zoom));
+}
+document.addEventListener("touchstart", function (e) {
+  if (e.touches.length === 2) pinch = { d: touchDist(e.touches), z: cur.zget ? cur.zget() : zoom, r: 1 };
 }, { passive: true });
-view.addEventListener("touchmove", function (e) {
+document.addEventListener("touchmove", function (e) {
   if (!pinch || e.touches.length !== 2) return;
   e.preventDefault();
-  var z = Math.max(0.6, Math.min(3.5, pinch.z * touchDist(e.touches) / pinch.d));
-  if (Math.abs(z - zoom) < 0.03) return;
-  zoom = z; applyZoom();
-  if (cur.onPinch) cur.onPinch();
+  pinch.r = touchDist(e.touches) / pinch.d;
+  if (!pinchRaf) pinchRaf = requestAnimationFrame(function () {   // al massimo un aggiornamento per fotogramma
+    pinchRaf = 0;
+    if (pinch) pinchApply(pinch.z * pinch.r, false);
+  });
 }, { passive: false });
 function endPinch(e) {
   if (!pinch || e.touches.length >= 2) return;
-  pinch = null;
-  zoom = Math.round(zoom * 20) / 20;
-  LS.set("zoom", String(zoom)); applyZoom();
-  if (cur.onZoom) cur.onZoom();
+  var p = pinch; pinch = null;
+  pinchApply(p.z * p.r, true);
 }
-view.addEventListener("touchend", endPinch, { passive: true });
-view.addEventListener("touchcancel", endPinch, { passive: true });
+document.addEventListener("touchend", endPinch, { passive: true });
+document.addEventListener("touchcancel", endPinch, { passive: true });
+// La barra in alto si nasconde scorrendo verso il basso e riappare scorrendo verso l'alto: più spazio per leggere.
+var lastY = 0, barHid = false;
+window.addEventListener("scroll", function () {
+  var y = window.pageYOffset, dy = y - lastY;
+  if (Math.abs(dy) < 10) return;
+  var hide = dy > 0 && y > 80;
+  if (hide !== barHid) { barHid = hide; $("#bar").classList.toggle("hid", hide); }
+  lastY = y;
+}, { passive: true });
 document.addEventListener("fullscreenchange", onFsChange);
 document.addEventListener("mozfullscreenchange", onFsChange);
 window.addEventListener("hashchange", route);
