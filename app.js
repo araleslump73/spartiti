@@ -28,6 +28,15 @@ var LS = {
 };
 
 // ------------------------------------------------------------------ errori
+// Errori imprevisti: mostrati in alto invece di sparire in silenzio
+window.addEventListener("error", function (e) {
+  var b = document.getElementById("info");
+  if (b) b.innerHTML = '<span class="err">Errore: ' + esc(e.message || "sconosciuto") + "</span>";
+});
+window.addEventListener("unhandledrejection", function (e) {
+  var b = document.getElementById("info"), r = e.reason;
+  if (b && !(r && r.kind)) b.innerHTML = '<span class="err">Errore: ' + esc((r && (r.message || r)) || "sconosciuto") + "</span>";
+});
 function AppError(msg, kind) { this.message = msg; this.kind = kind; }
 AppError.prototype = Object.create(Error.prototype);
 function isNetErr(e) { return e instanceof TypeError || (e && e.kind === "offline"); }
@@ -531,7 +540,10 @@ async function renderPdf(blob, seq) {
       await pg.render({ canvasContext: c.getContext("2d"), viewport: vp }).promise;
       p.ar = vp1.height / vp1.width;
       p.done = w;
-    } catch (e) { p.err = (p.err || 0) + 1; }
+    } catch (e) {
+      p.err = (p.err || 0) + 1;
+      info('<span class="err">PDF pagina ' + p.n + ": " + esc(e && e.message || e) + "</span>");
+    }
     p.busy = false;
     if (p.vis && p.done !== cssWidth() && (p.err || 0) < 3) draw(p);   // lo zoom è cambiato nel frattempo
   }
