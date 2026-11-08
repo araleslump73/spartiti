@@ -278,8 +278,7 @@ function armAutoFs() {
 var view = $("#view"), cur = {};
 var BTN = ["bMinus", "bPlus", "bUpload", "bEdit", "bSave", "bOffline"];
 function chrome(title, buttons) {
-  $("#title").textContent = title || "Spartiti";
-  document.title = title || "Spartiti";
+  $("#title").textContent = title || "Spartiti";   // document.title resta fisso: è il nome del collegamento sulla Home
   BTN.forEach(function (b) { $("#" + b).hidden = (buttons || []).indexOf(b) < 0; });
 }
 function info(html) { $("#info").innerHTML = html || ""; }
